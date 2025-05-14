@@ -88,15 +88,29 @@ void EKF::update(const Eigen::VectorXd& z) {
     // Calculate innovation covariance
     Eigen::MatrixXd S = H * m_P * H.transpose() + m_R;
     
-    // Calculate Kalman gain
-    Eigen::MatrixXd K = m_P * H.transpose() * S.inverse();
+    // Use more stable solver instead of direct inversion
+    // Calculate Kalman gain using solving linear system instead of explicit inversion
+    Eigen::MatrixXd PHt = m_P * H.transpose();
+    Eigen::MatrixXd K;
+    
+    // Use a more numerically stable method to compute K
+    K = S.ldlt().solve(PHt.transpose()).transpose();
+    
+    // Check for numerical issues
+    if (!K.allFinite()) {
+        std::cerr << "Warning: Kalman gain contains non-finite values. Skipping update." << std::endl;
+        return;
+    }
     
     // Update state
     m_x = m_x + K * y;
     
-    // Update covariance
+    // Joseph form update is more numerically stable
     Eigen::MatrixXd I = Eigen::MatrixXd::Identity(m_stateSize, m_stateSize);
-    m_P = (I - K * H) * m_P;
+    m_P = (I - K * H) * m_P * (I - K * H).transpose() + K * m_R * K.transpose();
+    
+    // Ensure the covariance remains symmetric
+    m_P = (m_P + m_P.transpose()) / 2.0;
 }
 
 Eigen::VectorXd EKF::getState() const {

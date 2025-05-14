@@ -3,6 +3,7 @@
 
 #include <functional>
 #include <Eigen/Dense>
+#include <iostream>  // Add for std::cerr
 
 /**
  * Extended Kalman Filter implementation

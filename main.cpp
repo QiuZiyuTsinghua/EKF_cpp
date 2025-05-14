@@ -83,18 +83,23 @@ int main() {
         Eigen::VectorXd z(2);
         z << true_x + noise(gen), true_y + noise(gen);
         
-        // Predict step
-        ekf.predict(dt);
-        
-        // Update step with measurement
-        ekf.update(z);
-        
-        // Print every 10 steps
-        if (i % 10 == 0) {
-            Eigen::VectorXd state = ekf.getState();
-            std::cout << "Step " << i << ": True: (" << true_x << ", " << true_y << "), ";
-            std::cout << "Estimated: (" << state(0) << ", " << state(1) << "), ";
-            std::cout << "Velocity: (" << state(2) << ", " << state(3) << ")" << std::endl;
+        try {
+            // Predict step
+            ekf.predict(dt);
+            
+            // Update step with measurement
+            ekf.update(z);
+            
+            // Print every 10 steps
+            if (i % 10 == 0) {
+                Eigen::VectorXd state = ekf.getState();
+                std::cout << "Step " << i << ": True: (" << true_x << ", " << true_y << "), ";
+                std::cout << "Estimated: (" << state(0) << ", " << state(1) << "), ";
+                std::cout << "Velocity: (" << state(2) << ", " << state(3) << ")" << std::endl;
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Error at step " << i << ": " << e.what() << std::endl;
+            break;
         }
     }
 
