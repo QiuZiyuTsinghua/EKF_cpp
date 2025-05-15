@@ -7,6 +7,11 @@ set(CMAKE_CXX_STANDARD 14)
 option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 option(BUILD_EXAMPLES "Build examples" OFF)
 
+# Make sure CMAKE_INSTALL_PREFIX is set properly
+if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+  set(CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/install" CACHE PATH "Default install path" FORCE)
+endif()
+
 # Find Eigen
 find_package(Eigen3 REQUIRED)
 include_directories(${EIGEN3_INCLUDE_DIR})
@@ -39,3 +44,9 @@ if(BUILD_EXAMPLES)
             COPYONLY)
     endif()
 endif()
+
+# Print some diagnostic information
+message(STATUS "Build directory: ${CMAKE_BINARY_DIR}")
+message(STATUS "Source directory: ${CMAKE_SOURCE_DIR}")
+message(STATUS "Install prefix: ${CMAKE_INSTALL_PREFIX}")
+message(STATUS "Shared libs: ${BUILD_SHARED_LIBS}")
