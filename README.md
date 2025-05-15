@@ -124,6 +124,32 @@ To adapt this EKF implementation to your specific problem:
 3. Derive the corresponding Jacobians
 4. Set appropriate noise covariance matrices
 
+## Using EKF in Other Programs
+
+### Using with MATLAB/Simulink S-Function
+
+This EKF implementation can be integrated with MATLAB/Simulink using S-Functions. Follow these steps:
+
+1. **Compile the EKF as a shared library**:
+   - Use the provided `CMakeLists.txt` with the `BUILD_SHARED_LIBS` option enabled
+   - Run: `cmake -DBUILD_SHARED_LIBS=ON ..` from your build directory
+
+2. **Create an S-Function wrapper**:
+   - Use the provided `ekf_sfun.cpp` template
+   - Customize the state dimensions and models as needed
+
+3. **Compile the S-Function in MATLAB**:
+   ```matlab
+   mex -I/path/to/eigen -I/path/to/ekf/include ekf_sfun.cpp /path/to/ekf/lib/libekf.so
+   ```
+
+4. **Use in Simulink**:
+   - Add an S-Function block to your model
+   - Set the S-Function name to 'ekf_sfun'
+   - Configure parameters through the S-Function parameters dialog
+
+See the `examples/simulink` directory for a complete example.
+
 ## Performance Considerations
 
 - The EKF works well when the nonlinearities are mild

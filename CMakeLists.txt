@@ -3,12 +3,39 @@ project(ExtendedKalmanFilter)
 
 set(CMAKE_CXX_STANDARD 14)
 
+# Option to build shared libraries
+option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
+option(BUILD_EXAMPLES "Build examples" OFF)
+
 # Find Eigen
 find_package(Eigen3 REQUIRED)
 include_directories(${EIGEN3_INCLUDE_DIR})
 
-# Add the executable
-add_executable(ekf_demo main.cpp ekf.cpp)
+# Create EKF library
+add_library(ekf ekf.cpp)
+target_include_directories(ekf PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
-# Install target
-install(TARGETS ekf_demo DESTINATION bin)
+# Add the demo executable
+add_executable(ekf_demo main.cpp)
+target_link_libraries(ekf_demo ekf)
+
+# Install targets
+install(TARGETS ekf ekf_demo
+        RUNTIME DESTINATION bin
+        LIBRARY DESTINATION lib
+        ARCHIVE DESTINATION lib)
+install(FILES ekf.h DESTINATION include)
+
+# Build Simulink S-Function example if requested
+if(BUILD_EXAMPLES)
+    # Create simulink directory if it doesn't exist
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/examples/simulink)
+    
+    # Create S-Function if it doesn't exist yet
+    if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/examples/simulink/ekf_sfun.cpp)
+        configure_file(
+            ${CMAKE_CURRENT_SOURCE_DIR}/examples/simulink/ekf_sfun_template.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/examples/simulink/ekf_sfun.cpp
+            COPYONLY)
+    endif()
+endif()
