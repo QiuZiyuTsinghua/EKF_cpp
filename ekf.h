@@ -5,10 +5,21 @@
 #include <Eigen/Dense>
 #include <iostream>  // Add for std::cerr
 
+// Define export macros for Windows DLL
+#if defined(_WIN32) || defined(_WIN64)
+    #ifdef EKF_EXPORTS
+        #define EKF_API __declspec(dllexport)
+    #else
+        #define EKF_API __declspec(dllimport)
+    #endif
+#else
+    #define EKF_API
+#endif
+
 /**
  * Extended Kalman Filter implementation
  */
-class EKF {
+class EKF_API EKF {
 public:
     /**
      * Constructor

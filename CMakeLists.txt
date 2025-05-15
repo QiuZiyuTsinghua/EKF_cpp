@@ -12,9 +12,25 @@ if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
   set(CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/install" CACHE PATH "Default install path" FORCE)
 endif()
 
-# Find Eigen
-find_package(Eigen3 REQUIRED)
-include_directories(${EIGEN3_INCLUDE_DIR})
+# Platform-specific settings
+if(WIN32)
+  # Add Windows-specific compiler flags if needed
+  add_definitions(-DEKF_EXPORTS)
+  
+  # Set runtime library for Windows
+  set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
+endif()
+
+# Handle Eigen3 dependency
+if(DEFINED EIGEN3_INCLUDE_DIR)
+  # Use the manually specified Eigen3 directory
+  message(STATUS "Using provided Eigen3 at: ${EIGEN3_INCLUDE_DIR}")
+  include_directories(${EIGEN3_INCLUDE_DIR})
+else()
+  # Try to find Eigen3 via find_package
+  find_package(Eigen3 REQUIRED)
+  include_directories(${EIGEN3_INCLUDE_DIR})
+endif()
 
 # Create EKF library
 add_library(ekf ekf.cpp)
@@ -50,3 +66,4 @@ message(STATUS "Build directory: ${CMAKE_BINARY_DIR}")
 message(STATUS "Source directory: ${CMAKE_SOURCE_DIR}")
 message(STATUS "Install prefix: ${CMAKE_INSTALL_PREFIX}")
 message(STATUS "Shared libs: ${BUILD_SHARED_LIBS}")
+message(STATUS "Building on Windows: ${WIN32}")
