@@ -40,8 +40,12 @@ target_include_directories(ekf PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 add_executable(ekf_demo main.cpp)
 target_link_libraries(ekf_demo ekf)
 
+# Add the speed estimation demo executable
+add_executable(ekf_spdest main_spdest.cpp)
+target_link_libraries(ekf_spdest ekf)
+
 # Install targets
-install(TARGETS ekf ekf_demo
+install(TARGETS ekf ekf_demo ekf_spdest
         RUNTIME DESTINATION bin
         LIBRARY DESTINATION lib
         ARCHIVE DESTINATION lib)

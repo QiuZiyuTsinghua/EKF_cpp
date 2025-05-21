@@ -229,57 +229,119 @@ static void mdlStart(SimStruct *S)
     ekf->setProcessNoise(Q);
     ekf->setMeasurementNoise(R);
     
-    // Define state transition function - Set to linear motion model by default
-    // Users should modify this to match their specific system model
+    // Define state transition function for constant heading and velocity model
+    // State vector [x, y, θ, v] where:
+    // - x, y: position
+    // - θ: heading angle
+    // - v: velocity
     ekf->setStateTransitionFunction([](const Eigen::VectorXd& x, double dt) {
         int stateSize = x.size();
         Eigen::VectorXd newState = x;
         
-        // For position-velocity models, update positions based on velocities
-        // This is a simple example - replace with your specific model
-        if (stateSize >= 4) {  // Assuming at least 2D position-velocity
-            newState(0) += x(2) * dt;  // x += vx * dt
-            newState(1) += x(3) * dt;  // y += vy * dt
+        // Constant heading and velocity model
+        if (stateSize >= 4) {
+            double theta = x(2);  // Heading angle
+            double v = x(3);      // Velocity
+            
+            // Non-linear motion equations
+            newState(0) += v * cos(theta) * dt;  // x += v*cos(θ)*dt
+            newState(1) += v * sin(theta) * dt;  // y += v*sin(θ)*dt
+            // Heading and velocity remain constant
+            // newState(2) = theta;  // Already equal
+            // newState(3) = v;      // Already equal
         }
         
         return newState;
     });
     
-    // Define state Jacobian function - Set to linear motion Jacobian by default
+    // Define state Jacobian function for constant heading and velocity
     ekf->setStateJacobianFunction([](const Eigen::VectorXd& x, double dt) {
         int stateSize = x.size();
         Eigen::MatrixXd F = Eigen::MatrixXd::Identity(stateSize, stateSize);
         
-        // For position-velocity models, set Jacobian accordingly
-        if (stateSize >= 4) {  // Assuming at least 2D position-velocity
-            F(0, 2) = dt;  // dx/dvx = dt
-            F(1, 3) = dt;  // dy/dvy = dt
+        // Jacobian for constant heading and velocity model
+        if (stateSize >= 4) {
+            double theta = x(2);  // Heading angle
+            double v = x(3);      // Velocity
+            
+            // Partial derivatives
+            F(0, 2) = -v * sin(theta) * dt;  // ∂x/∂θ = -v*sin(θ)*dt
+            F(0, 3) = cos(theta) * dt;       // ∂x/∂v = cos(θ)*dt
+            F(1, 2) = v * cos(theta) * dt;   // ∂y/∂θ = v*cos(θ)*dt
+            F(1, 3) = sin(theta) * dt;       // ∂y/∂v = sin(θ)*dt
         }
         
         return F;
     });
     
-    // Define measurement function - Set to direct observation of positions by default
+    // Define measurement function for polar coordinates (range and bearing)
     ekf->setMeasurementFunction([measDim](const Eigen::VectorXd& x) {
         Eigen::VectorXd z(measDim);
         
-        // By default, assume we're measuring the first measDim states directly
-        // Replace with your specific measurement model
-        for (int i = 0; i < measDim; i++) {
-            z(i) = x(i);
+        // For polar measurement model: range and bearing
+        if (measDim >= 2) {
+            double px = x(0);
+            double py = x(1);
+            
+            // Convert from Cartesian to polar coordinates
+            double range = sqrt(px*px + py*py);        // Distance from origin
+            double bearing = atan2(py, px);            // Bearing angle
+            
+            z(0) = range;    // Range measurement
+            z(1) = bearing;  // Bearing measurement
+            
+            // If more measurement components exist, set to zero or appropriate values
+            for (int i = 2; i < measDim; i++) {
+                z(i) = 0;
+            }
+        }
+        else {
+            // Default case - for backward compatibility
+            for (int i = 0; i < measDim; i++) {
+                z(i) = (i < x.size()) ? x(i) : 0;
+            }
         }
         
         return z;
     });
     
-    // Define measurement Jacobian function
+    // Define measurement Jacobian function for polar coordinates
     ekf->setMeasurementJacobianFunction([measDim, stateDim](const Eigen::VectorXd& x) {
         Eigen::MatrixXd H = Eigen::MatrixXd::Zero(measDim, stateDim);
         
-        // By default, set direct observation Jacobian
-        // Replace with your specific Jacobian
-        for (int i = 0; i < measDim && i < stateDim; i++) {
-            H(i, i) = 1.0;
+        // Jacobian for polar measurement model
+        if (measDim >= 2 && stateDim >= 4) {
+            double px = x(0);
+            double py = x(1);
+            double d = px*px + py*py;
+            double r = sqrt(d);
+            
+            // Handle division by zero
+            if (r < 1e-6) {
+                // Near origin - avoid numerical issues
+                H(0, 0) = 1.0;  // Set arbitrary direction
+                H(0, 1) = 0.0;
+                H(1, 0) = 0.0;
+                H(1, 1) = 1.0;
+            } 
+            else {
+                // Range partial derivatives
+                H(0, 0) = px / r;    // ∂r/∂x = x/r
+                H(0, 1) = py / r;    // ∂r/∂y = y/r
+                
+                // Bearing partial derivatives
+                H(1, 0) = -py / d;   // ∂φ/∂x = -y/(x²+y²)
+                H(1, 1) = px / d;    // ∂φ/∂y = x/(x²+y²)
+            }
+            
+            // Other state variables don't directly affect the measurement
+            // H(0,2) = H(0,3) = H(1,2) = H(1,3) = 0 (already set by initializing with zeros)
+        }
+        else {
+            // Default case - for backward compatibility
+            for (int i = 0; i < measDim && i < stateDim; i++) {
+                H(i, i) = 1.0;
+            }
         }
         
         return H;
