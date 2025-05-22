@@ -63,6 +63,81 @@ This directory contains files for integrating the C++ EKF implementation with MA
    - Output 1: Estimated state vector
    - Output 2: Covariance matrix (flattened)
 
+## Configuring Parameters for the EKF S-Function
+
+The EKF S-Function requires 8 parameters that define its behavior. Here's how to configure them with clear examples:
+
+### Parameter Definition Format
+
+Parameters must be defined as MATLAB expressions that evaluate to the correct dimensions:
+
+```matlab
+% Example parameter format for S-Function block
+[
+  [3],                       % STATE_DIM: State dimension - [v_x, v_y, γ]
+  [7],                       % MEAS_DIM: Measurement vector - [ax, ay, γ, v_fl, v_fr, v_rl, v_rr]
+  [1],                       % CTRL_DIM: Control dimension - [δ]
+  [0.01],                    % DT: Time step in seconds
+  [10; 0; 0],                % INITIAL_STATE: Initial state vector [v_x; v_y; γ]
+  diag([1.0, 0.1, 0.01]),    % INITIAL_COV: Initial covariance matrix
+  diag([0.5, 0.1, 0.01]),    % PROCESS_NOISE_COV: Process noise
+  diag([0.1, 0.1, 0.01, 0.2, 0.2, 0.2, 0.2]) % MEAS_NOISE_COV: Measurement noise
+]
+```
+
+### Vehicle Velocity Estimation Model Example
+
+For the 3-DOF vehicle model with state vector `[v_x, v_y, γ]`, configure the parameters as follows:
+
+1. Double-click the S-Function block in your Simulink model
+2. Set the S-Function name to `ekf_sfun` 
+3. In the "S-function parameters" field, enter the following:
+
+```matlab
+[3]                                   % STATE_DIM: 3 states [v_x, v_y, γ]
+[7]                                   % MEAS_DIM: 7 measurements
+[1]                                   % CTRL_DIM: 1 control input (steering angle)
+[0.01]                                % DT: 10ms sampling time
+[10; 0; 0]                            % INITIAL_STATE: initial velocity 10 m/s forward
+diag([1.0, 0.1, 0.01])                % INITIAL_COV: initial uncertainties
+diag([0.5, 0.1, 0.01])                % PROCESS_NOISE_COV: model uncertainties
+diag([0.1, 0.1, 0.01, 0.2, 0.2, 0.2, 0.2])  % MEAS_NOISE_COV: sensor uncertainties
+```
+
+### Vehicle Parameters
+
+When using the vehicle model, additional parameters need to be defined in your Simulink model:
+
+```matlab
+% Define vehicle parameters in your MATLAB workspace before simulation
+vehicle_params.m = 1500.0;       % Mass (kg)
+vehicle_params.Iz = 2500.0;      % Yaw moment of inertia (kg*m^2)
+vehicle_params.lf = 1.2;         % Distance from CG to front axle (m)
+vehicle_params.lr = 1.4;         % Distance from CG to rear axle (m)
+vehicle_params.track = 1.6;      % Track width (m)
+vehicle_params.Cf = 50000.0;     % Front cornering stiffness (N/rad)
+vehicle_params.Cr = 50000.0;     % Rear cornering stiffness (N/rad)
+```
+
+### Understanding Parameter Types
+
+* **STATE_DIM**: Dimension of your state vector
+* **MEAS_DIM**: Number of measurement inputs to the filter
+* **CTRL_DIM**: Number of control inputs (0 if none)
+* **DT**: Time step in seconds (should match your Simulink fixed-step solver)
+* **INITIAL_STATE**: Column vector with initial values for each state
+* **INITIAL_COV**: Covariance matrix for initial state uncertainty
+* **PROCESS_NOISE_COV**: Covariance matrix of process noise (model uncertainty)
+* **MEAS_NOISE_COV**: Covariance matrix of measurement noise (sensor uncertainty)
+
+### Tips for Parameter Configuration
+
+1. Use `diag([...])` for diagonal covariance matrices
+2. For full covariance matrices, use `[row1; row2; ...]` format
+3. Match dimensions exactly with your state and measurement vectors
+4. Use realistic noise values based on your sensors and model
+5. Matrices can be defined as MATLAB variables and referenced by name
+
 ## Example Simulink Model Structure
 
 ```

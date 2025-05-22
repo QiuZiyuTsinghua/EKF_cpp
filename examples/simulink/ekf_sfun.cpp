@@ -1,7 +1,14 @@
 /*
  * S-Function wrapper for Extended Kalman Filter library
  *
- * This file provides a Simulink S-Function interface to the EKF C++ library.
+ * This file provides a Simulink S-Function interface to the EKF C++ library
+ * for a vehicle velocity estimation model. The state vector is [v_x, v_y, γ],
+ * where:
+ *   - v_x: Longitudinal velocity
+ *   - v_y: Lateral velocity
+ *   - γ: Yaw rate (angular velocity around z-axis)
+ *
+ * This model is designed for vehicle dynamics state estimation.
  */
 
 #define S_FUNCTION_NAME ekf_sfun
@@ -14,14 +21,14 @@
 
 // Define parameters indices
 enum ParamIndex {
-    STATE_DIM = 0,
-    MEAS_DIM,
-    CTRL_DIM,
-    DT,
-    INITIAL_STATE,
-    INITIAL_COV,
-    PROCESS_NOISE_COV,
-    MEAS_NOISE_COV,
+    STATE_DIM = 0,    // Dimension of state vector [v_x, v_y, γ]
+    MEAS_DIM,         // Dimension of measurement vector [ax, ay, γ, v_fl, v_fr, v_rl, v_rr]
+    CTRL_DIM,         // Dimension of control vector [δ] (steering angle)
+    DT,               // Time step
+    INITIAL_STATE,    // Initial state values
+    INITIAL_COV,      // Initial state covariance
+    PROCESS_NOISE_COV, // Process noise covariance
+    MEAS_NOISE_COV,    // Measurement noise covariance
     NUM_PARAMS
 };
 
@@ -129,13 +136,13 @@ static void mdlInitializeSizes(SimStruct *S)
     // Configure inputs
     if (!ssSetNumInputPorts(S, ctrlDim > 0 ? 2 : 1)) return;
     
-    // Measurement input
+    // Measurement input - [ax, ay, γ, v_fl, v_fr, v_rl, v_rr]
     ssSetInputPortWidth(S, 0, measDim);
     ssSetInputPortDataType(S, 0, SS_DOUBLE);
     ssSetInputPortDirectFeedThrough(S, 0, 1);
     ssSetInputPortRequiredContiguous(S, 0, 1);
     
-    // Control input (if needed)
+    // Control input (steering angle δ if needed)
     if (ctrlDim > 0) {
         ssSetInputPortWidth(S, 1, ctrlDim);
         ssSetInputPortDataType(S, 1, SS_DOUBLE);
@@ -146,7 +153,7 @@ static void mdlInitializeSizes(SimStruct *S)
     // Configure outputs
     if (!ssSetNumOutputPorts(S, 2)) return;
     
-    // State estimate output
+    // State estimate output - [v_x, v_y, γ]
     ssSetOutputPortWidth(S, 0, stateDim);
     ssSetOutputPortDataType(S, 0, SS_DOUBLE);
     
@@ -190,7 +197,7 @@ static void mdlStart(SimStruct *S)
     // Create EKF instance
     EKF* ekf = new EKF(stateDim, measDim, ctrlDim);
     
-    // Get initial state parameter
+    // Get initial state parameter - [v_x, v_y, γ]
     double* initialState = mxGetPr(ssGetSFcnParam(S, INITIAL_STATE));
     Eigen::VectorXd x0(stateDim);
     for (int i = 0; i < stateDim; i++) {
@@ -229,120 +236,165 @@ static void mdlStart(SimStruct *S)
     ekf->setProcessNoise(Q);
     ekf->setMeasurementNoise(R);
     
-    // Define state transition function for constant heading and velocity model
-    // State vector [x, y, θ, v] where:
-    // - x, y: position
-    // - θ: heading angle
-    // - v: velocity
-    ekf->setStateTransitionFunction([](const Eigen::VectorXd& x, double dt) {
-        int stateSize = x.size();
-        Eigen::VectorXd newState = x;
+    // Define vehicle parameters (typical values)
+    double m = 1500.0;      // Vehicle mass (kg)
+    double Iz = 2500.0;     // Yaw moment of inertia (kg*m^2)
+    double lf = 1.2;        // Distance from CG to front axle (m)
+    double lr = 1.4;        // Distance from CG to rear axle (m)
+    double track = 1.6;     // Track width (m)
+    double Cf = 50000.0;    // Front cornering stiffness (N/rad)
+    double Cr = 50000.0;    // Rear cornering stiffness (N/rad)
+    
+    // Define state transition function for vehicle velocity model
+    // State vector [v_x, v_y, γ] where:
+    // - v_x: Longitudinal velocity
+    // - v_y: Lateral velocity
+    // - γ: Yaw rate
+    ekf->setStateTransitionFunction([m, Iz, Cf, Cr, lf, lr](const Eigen::VectorXd& x, double dt) {
+        // Extract state variables
+        double vx = x(0);    // Longitudinal velocity
+        double vy = x(1);    // Lateral velocity
+        double gamma = x(2); // Yaw rate
         
-        // Constant heading and velocity model
-        if (stateSize >= 4) {
-            double theta = x(2);  // Heading angle
-            double v = x(3);      // Velocity
-            
-            // Non-linear motion equations
-            newState(0) += v * cos(theta) * dt;  // x += v*cos(θ)*dt
-            newState(1) += v * sin(theta) * dt;  // y += v*sin(θ)*dt
-            // Heading and velocity remain constant
-            // newState(2) = theta;  // Already equal
-            // newState(3) = v;      // Already equal
-        }
+        Eigen::VectorXd next_x = x;
         
-        return newState;
+        // Calculate tire slip angles
+        double beta = atan2(vy, vx);  // Vehicle sideslip angle
+        
+        // Front and rear tire slip angles
+        double alpha_f = beta - lf * gamma / vx;  // Front slip angle
+        double alpha_r = beta + lr * gamma / vx;  // Rear slip angle
+        
+        // Calculate tire forces
+        double Fyf = -Cf * alpha_f;  // Front lateral force
+        double Fyr = -Cr * alpha_r;  // Rear lateral force
+        
+        // Calculate acceleration components
+        double ax = 0.0;  // Assume zero longitudinal acceleration for simplicity
+        double ay = (Fyf + Fyr) / m;  // Lateral acceleration
+        double Mz = Fyf * lf - Fyr * lr;  // Yaw moment
+        
+        // Update state using the vehicle dynamics equations:
+        // v̇_x = a_x + v_y·γ
+        next_x(0) += dt * (ax + vy * gamma);
+        
+        // v̇_y = a_y - v_x·γ
+        next_x(1) += dt * (ay - vx * gamma);
+        
+        // γ̇ = M_z/I_z
+        next_x(2) += dt * (Mz / Iz);
+        
+        return next_x;
     });
     
-    // Define state Jacobian function for constant heading and velocity
-    ekf->setStateJacobianFunction([](const Eigen::VectorXd& x, double dt) {
-        int stateSize = x.size();
-        Eigen::MatrixXd F = Eigen::MatrixXd::Identity(stateSize, stateSize);
+    // Define state Jacobian function for vehicle model
+    ekf->setStateJacobianFunction([m, Iz, Cf, Cr, lf, lr](const Eigen::VectorXd& x, double dt) {
+        Eigen::MatrixXd J = Eigen::MatrixXd::Identity(x.size(), x.size());
         
-        // Jacobian for constant heading and velocity model
-        if (stateSize >= 4) {
-            double theta = x(2);  // Heading angle
-            double v = x(3);      // Velocity
-            
-            // Partial derivatives
-            F(0, 2) = -v * sin(theta) * dt;  // ∂x/∂θ = -v*sin(θ)*dt
-            F(0, 3) = cos(theta) * dt;       // ∂x/∂v = cos(θ)*dt
-            F(1, 2) = v * cos(theta) * dt;   // ∂y/∂θ = v*cos(θ)*dt
-            F(1, 3) = sin(theta) * dt;       // ∂y/∂v = sin(θ)*dt
-        }
+        // Extract state variables
+        double vx = x(0);
+        double vy = x(1);
+        double gamma = x(2);
         
-        return F;
+        // Jacobian elements based on linearized model
+        // ∂(v̇_x)/∂v_y = γ
+        J(0, 1) = dt * gamma;
+        
+        // ∂(v̇_x)/∂γ = v_y
+        J(0, 2) = dt * vy;
+        
+        // ∂(v̇_y)/∂v_x = -γ
+        J(1, 0) = -dt * gamma;
+        
+        // ∂(v̇_y)/∂γ = -v_x
+        J(1, 2) = -dt * vx;
+        
+        // Note: Additional Jacobian terms for the tire model derivatives are
+        // simplified here. In a complete implementation, these would include
+        // the effect of slip angle changes on forces.
+        
+        return J;
     });
     
-    // Define measurement function for polar coordinates (range and bearing)
-    ekf->setMeasurementFunction([measDim](const Eigen::VectorXd& x) {
-        Eigen::VectorXd z(measDim);
+    // Define measurement function
+    // Maps state [v_x, v_y, γ] to measurements [ax, ay, γ, v_fl, v_fr, v_rl, v_rr]
+    ekf->setMeasurementFunction([m, Iz, Cf, Cr, lf, lr, track](const Eigen::VectorXd& x) {
+        // Extract state variables
+        double vx = x(0);
+        double vy = x(1);
+        double gamma = x(2);
         
-        // For polar measurement model: range and bearing
-        if (measDim >= 2) {
-            double px = x(0);
-            double py = x(1);
-            
-            // Convert from Cartesian to polar coordinates
-            double range = sqrt(px*px + py*py);        // Distance from origin
-            double bearing = atan2(py, px);            // Bearing angle
-            
-            z(0) = range;    // Range measurement
-            z(1) = bearing;  // Bearing measurement
-            
-            // If more measurement components exist, set to zero or appropriate values
-            for (int i = 2; i < measDim; i++) {
-                z(i) = 0;
-            }
-        }
-        else {
-            // Default case - for backward compatibility
-            for (int i = 0; i < measDim; i++) {
-                z(i) = (i < x.size()) ? x(i) : 0;
-            }
-        }
+        // Create measurement vector (size should match measDim)
+        Eigen::VectorXd z(7);  // [ax, ay, gamma, v_fl, v_fr, v_rl, v_rr]
+        
+        // Calculate tire slip angles
+        double beta = atan2(vy, vx);
+        double alpha_f = beta - lf * gamma / vx;
+        double alpha_r = beta + lr * gamma / vx;
+        
+        // Calculate tire forces
+        double Fyf = -Cf * alpha_f;
+        double Fyr = -Cr * alpha_r;
+        
+        // Calculate measured accelerations
+        double ax = vy * gamma;  // Centripetal component only (simplified)
+        double ay = (Fyf + Fyr) / m - vx * gamma;
+        
+        // Calculate wheel speeds
+        double v_fl = vx - (gamma * track/2);  // Front-left wheel
+        double v_fr = vx + (gamma * track/2);  // Front-right wheel
+        double v_rl = vx - (gamma * track/2);  // Rear-left wheel
+        double v_rr = vx + (gamma * track/2);  // Rear-right wheel
+        
+        // Populate measurement vector
+        z << ax, ay, gamma, v_fl, v_fr, v_rl, v_rr;
         
         return z;
     });
     
-    // Define measurement Jacobian function for polar coordinates
-    ekf->setMeasurementJacobianFunction([measDim, stateDim](const Eigen::VectorXd& x) {
-        Eigen::MatrixXd H = Eigen::MatrixXd::Zero(measDim, stateDim);
+    // Define measurement Jacobian function
+    ekf->setMeasurementJacobianFunction([m, Iz, Cf, Cr, lf, lr, track](const Eigen::VectorXd& x) {
+        // Create Jacobian matrix H mapping from state to measurement
+        Eigen::MatrixXd H = Eigen::MatrixXd::Zero(7, 3);  // 7 measurements, 3 states
         
-        // Jacobian for polar measurement model
-        if (measDim >= 2 && stateDim >= 4) {
-            double px = x(0);
-            double py = x(1);
-            double d = px*px + py*py;
-            double r = sqrt(d);
-            
-            // Handle division by zero
-            if (r < 1e-6) {
-                // Near origin - avoid numerical issues
-                H(0, 0) = 1.0;  // Set arbitrary direction
-                H(0, 1) = 0.0;
-                H(1, 0) = 0.0;
-                H(1, 1) = 1.0;
-            } 
-            else {
-                // Range partial derivatives
-                H(0, 0) = px / r;    // ∂r/∂x = x/r
-                H(0, 1) = py / r;    // ∂r/∂y = y/r
-                
-                // Bearing partial derivatives
-                H(1, 0) = -py / d;   // ∂φ/∂x = -y/(x²+y²)
-                H(1, 1) = px / d;    // ∂φ/∂y = x/(x²+y²)
-            }
-            
-            // Other state variables don't directly affect the measurement
-            // H(0,2) = H(0,3) = H(1,2) = H(1,3) = 0 (already set by initializing with zeros)
-        }
-        else {
-            // Default case - for backward compatibility
-            for (int i = 0; i < measDim && i < stateDim; i++) {
-                H(i, i) = 1.0;
-            }
-        }
+        // Extract state variables
+        double vx = x(0);
+        double vy = x(1);
+        double gamma = x(2);
+        
+        // Acceleration measurement derivatives
+        // ∂(ax)/∂v_y = γ
+        H(0, 1) = gamma;
+        
+        // ∂(ax)/∂γ = v_y
+        H(0, 2) = vy;
+        
+        // ∂(ay)/∂v_x = -γ
+        H(1, 0) = -gamma;
+        
+        // ∂(ay)/∂γ = -v_x
+        H(1, 2) = -vx;
+        
+        // Yaw rate measurement (direct observation)
+        // ∂(γ_meas)/∂γ = 1
+        H(2, 2) = 1.0;
+        
+        // Wheel speed measurements
+        // Front-left wheel: v_fl = vx - (gamma * track/2)
+        H(3, 0) = 1.0;       // ∂(v_fl)/∂v_x = 1
+        H(3, 2) = -track/2;  // ∂(v_fl)/∂γ = -track/2
+        
+        // Front-right wheel: v_fr = vx + (gamma * track/2)
+        H(4, 0) = 1.0;       // ∂(v_fr)/∂v_x = 1
+        H(4, 2) = track/2;   // ∂(v_fr)/∂γ = track/2
+        
+        // Rear-left wheel: v_rl = vx - (gamma * track/2)
+        H(5, 0) = 1.0;       // ∂(v_rl)/∂v_x = 1
+        H(5, 2) = -track/2;  // ∂(v_rl)/∂γ = -track/2
+        
+        // Rear-right wheel: v_rr = vx + (gamma * track/2)
+        H(6, 0) = 1.0;       // ∂(v_rr)/∂v_x = 1
+        H(6, 2) = track/2;   // ∂(v_rr)/∂γ = track/2
         
         return H;
     });
@@ -363,35 +415,35 @@ static void mdlOutputs(SimStruct *S, int_T tid)
     int ctrlDim = static_cast<int>(*mxGetPr(ssGetSFcnParam(S, CTRL_DIM)));
     real_T dt = *mxGetPr(ssGetSFcnParam(S, DT));
     
-    // Get input ports
+    // Get input ports (measurements and control if available)
     const real_T *measurement = ssGetInputPortRealSignal(S, 0);
     const real_T *control = ctrlDim > 0 ? ssGetInputPortRealSignal(S, 1) : nullptr;
     
-    // Get output ports
+    // Get output ports for state and covariance
     real_T *stateOut = ssGetOutputPortRealSignal(S, 0);
     real_T *covOut = ssGetOutputPortRealSignal(S, 1);
     
-    // Convert measurement to Eigen
+    // Convert measurement to Eigen vector
     int measDim = ssGetInputPortWidth(S, 0);
     Eigen::VectorXd z(measDim);
     for (int i = 0; i < measDim; i++) {
         z(i) = measurement[i];
     }
     
-    // Perform EKF prediction and update
+    // Perform EKF prediction and update steps
     ekf->predict(dt);
     ekf->update(z);
     
-    // Get state and covariance
+    // Get state and covariance estimates
     Eigen::VectorXd state = ekf->getState();
     Eigen::MatrixXd cov = ekf->getCovariance();
     
-    // Output state
+    // Output state [v_x, v_y, γ]
     for (int i = 0; i < stateDim; i++) {
         stateOut[i] = state(i);
     }
     
-    // Output covariance (flattened)
+    // Output covariance (flattened matrix)
     for (int i = 0; i < stateDim; i++) {
         for (int j = 0; j < stateDim; j++) {
             covOut[i + j*stateDim] = cov(i, j);
@@ -402,7 +454,7 @@ static void mdlOutputs(SimStruct *S, int_T tid)
 // Function to terminate
 static void mdlTerminate(SimStruct *S)
 {
-    // Get and delete EKF instance
+    // Get and delete EKF instance to prevent memory leaks
     EKF* ekf = static_cast<EKF*>(ssGetPWorkValue(S, 0));
     if (ekf) {
         delete ekf;
