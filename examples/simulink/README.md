@@ -7,6 +7,8 @@ This directory contains files for integrating the C++ EKF implementation with MA
 - `ekf_sfun.cpp` - S-Function source code that interfaces with the EKF library
 - `compile_sfun.m` - MATLAB script to compile the S-Function
 - `ekf_example.slx` - Example Simulink model (created when you follow the steps below)
+- `vehicleMotionGenerator.m` - MATLAB function to generate vehicle motion profiles
+- `measurementSimulator.m` - MATLAB function to simulate sensor measurements
 
 ## Setup Instructions
 
@@ -30,38 +32,13 @@ This directory contains files for integrating the C++ EKF implementation with MA
    compile_sfun
    ```
 
-5. Create a new Simulink model or open the example:
-   ```matlab
-   open_system('ekf_example')
-   ```
-   If the example doesn't exist yet, create a new model:
-   ```matlab
-   new_system('ekf_example')
-   open_system('ekf_example')
-   ```
-
 ## Creating a Simulink Model with EKF
 
 1. Add an S-Function block from the Simulink library browser.
 
 2. Double-click the block and set:
    - S-Function Name: `ekf_sfun`
-   - S-Function Parameters:
-     ```
-     [4]          % STATE_DIM: State dimension (e.g., 4 for 2D position/velocity)
-     [2]          % MEAS_DIM: Measurement dimension (e.g., 2 for position only)
-     [0]          % CTRL_DIM: Control dimension (0 if not used)
-     [0.1]        % DT: Time step in seconds
-     [0;0;1;1]    % INITIAL_STATE: Initial state vector [x;y;vx;vy]
-     [eye(4)]     % INITIAL_COV: Initial covariance matrix
-     [diag([0.01,0.01,0.1,0.1])] % PROCESS_NOISE_COV: Process noise 
-     [eye(2)*0.1] % MEAS_NOISE_COV: Measurement noise
-     ```
-
-3. Add input and output ports to connect to your model:
-   - Input: Measurement vector
-   - Output 1: Estimated state vector
-   - Output 2: Covariance matrix (flattened)
+   - S-Function Parameters: (see below)
 
 ## Configuring Parameters for the EKF S-Function
 
@@ -104,67 +81,114 @@ diag([0.5, 0.1, 0.01])                % PROCESS_NOISE_COV: model uncertainties
 diag([0.1, 0.1, 0.01, 0.2, 0.2, 0.2, 0.2])  % MEAS_NOISE_COV: sensor uncertainties
 ```
 
-### Vehicle Parameters
+## Simulink Model Connection Guide
 
-When using the vehicle model, additional parameters need to be defined in your Simulink model:
+Here's how to connect the blocks to create a complete vehicle speed estimation simulation:
 
-```matlab
-% Define vehicle parameters in your MATLAB workspace before simulation
-vehicle_params.m = 1500.0;       % Mass (kg)
-vehicle_params.Iz = 2500.0;      % Yaw moment of inertia (kg*m^2)
-vehicle_params.lf = 1.2;         % Distance from CG to front axle (m)
-vehicle_params.lr = 1.4;         % Distance from CG to rear axle (m)
-vehicle_params.track = 1.6;      % Track width (m)
-vehicle_params.Cf = 50000.0;     % Front cornering stiffness (N/rad)
-vehicle_params.Cr = 50000.0;     % Rear cornering stiffness (N/rad)
+### Step 1: Add Blocks to Your Simulink Model
+
+1. Create a new Simulink model: `File > New > Simulink Model`
+2. Add the following blocks:
+   - **Clock** block (Sources library)
+   - **MATLAB Function** block (User-Defined Functions library) - for vehicle motion generation
+   - **MATLAB Function** block (User-Defined Functions library) - for measurement simulation
+   - **S-Function** block (User-Defined Functions library) - for the EKF
+   - **Mux** block (Signal Routing library) - for combining measurement signals
+   - **Demux** block (Signal Routing library) - for splitting state outputs
+   - **Scope** blocks (Sinks library) - for visualization
+
+### Step 2: Configure the MATLAB Function Blocks
+
+1. **Vehicle Motion Generator Block**:
+   - Double-click the first MATLAB Function block
+   - Enter: `[vx, vy, gamma, acceleration, steering] = vehicleMotionGenerator(t)`
+   - Make sure `vehicleMotionGenerator.m` is in your MATLAB path
+
+2. **Measurement Simulator Block**:
+   - Double-click the second MATLAB Function block
+   - Enter: `[ax, ay, gamma_meas, v_fl, v_fr, v_rl, v_rr] = measurementSimulator(vx, vy, gamma)`
+   - Make sure `measurementSimulator.m` is in your MATLAB path
+
+3. **EKF S-Function Block**:
+   - Configure as described in the "Configuring Parameters" section
+
+### Step 3: Connect the Blocks
+
+Connect the blocks in the following sequence:
+
+1. **Clock** → input port of the **Vehicle Motion Generator**
+2. Connect the outputs of **Vehicle Motion Generator**:
+   - `vx`, `vy`, `gamma` → inputs of the **Measurement Simulator**
+   - Connect these same signals to a **Scope** (for ground truth visualization)
+3. Connect the outputs of **Measurement Simulator**:
+   - All outputs → **Mux** block to create a 7-element vector
+   - **Mux** → input port of the **EKF S-Function**
+4. Connect the outputs of **EKF S-Function**:
+   - State output (port 1) → **Demux** block to split into 3 signals
+   - **Demux** → **Scope** (for estimated state visualization)
+   - Covariance output (port 2) → optional display or analysis
+
+### Step 4: Configure Simulation Parameters
+
+1. Set simulation time to 10 seconds
+2. Set fixed-step solver with step size matching the EKF DT parameter (e.g., 0.01s)
+3. Configure scopes to display multiple signals for comparison
+
+### Complete Simulink Block Diagram
+
+The final block diagram should look like this:
+
+```
+[Clock] → [Vehicle Motion Generator] → [Measurement Simulator] → [Mux] → [EKF S-Function] → [Demux] → [Scope]
+                      │                                                                 │
+                      │                                                                 ↓
+                      └───────────────────────────→ [Scope: Ground Truth] [Scope: Covariance]
 ```
 
-### Understanding Parameter Types
+### Example Visualization Setup
 
-* **STATE_DIM**: Dimension of your state vector
-* **MEAS_DIM**: Number of measurement inputs to the filter
-* **CTRL_DIM**: Number of control inputs (0 if none)
-* **DT**: Time step in seconds (should match your Simulink fixed-step solver)
-* **INITIAL_STATE**: Column vector with initial values for each state
-* **INITIAL_COV**: Covariance matrix for initial state uncertainty
-* **PROCESS_NOISE_COV**: Covariance matrix of process noise (model uncertainty)
-* **MEAS_NOISE_COV**: Covariance matrix of measurement noise (sensor uncertainty)
+Configure your scopes to compare true vs. estimated states:
 
-### Tips for Parameter Configuration
+1. **Scope 1 (Ground Truth)**: Shows the true vehicle states
+   - Configure with 3 input ports for vx, vy, and gamma
+   - Set appropriate y-axis limits (e.g., 0-15 for vx)
 
-1. Use `diag([...])` for diagonal covariance matrices
-2. For full covariance matrices, use `[row1; row2; ...]` format
-3. Match dimensions exactly with your state and measurement vectors
-4. Use realistic noise values based on your sensors and model
-5. Matrices can be defined as MATLAB variables and referenced by name
+2. **Scope 2 (Estimated States)**: Shows the EKF estimated states
+   - Configure with 3 input ports for estimated vx, vy, and gamma
+   - Use the same axis limits as Scope 1 for easy comparison
 
-## Example Simulink Model Structure
+3. **Scope 3 (Error)**: Optional scope to show estimation errors
+   - Connect difference blocks between true and estimated states
+   - Monitor real-time estimation performance
 
-```
-[Measurement Generator] --> [EKF S-Function] --> [Display/Scope]
-                                            \--> [Reshape] --> [Covariance Display]
-```
-
-## Customizing the EKF Model
-
-The default S-Function implementation uses a simple linear constant-velocity motion model.
-To customize the state transition and measurement models:
-
-1. Modify the `ekf_sfun.cpp` file:
-   - Find the `setStateTransitionFunction` call in `mdlStart`
-   - Replace the default lambda function with your specific model
-   - Do the same for `setStateJacobianFunction`, `setMeasurementFunction`, and `setMeasurementJacobianFunction`
-
-2. Recompile the S-Function using the `compile_sfun.m` script.
+With this setup, you can visualize how well the EKF tracks the true vehicle states under various driving conditions.
 
 ## Example MATLAB Code to Generate Test Inputs
 
 ```matlab
 % Create a test signal generator
-t = 0:0.1:10;
-x = sin(t);
-y = cos(t);
-measurements = [x; y];
+t = 0:0.01:10;
+vx = 10 * ones(size(t));
+vy = zeros(size(t));
+gamma = zeros(size(t));
+
+% Add lane change maneuver
+idx = (t >= 2) & (t < 4);
+gamma(idx) = 0.1;
+vy(idx) = 0.05;
+
+% Add braking event
+idx = (t >= 5) & (t < 7);
+vx(idx) = 10 - 2*(t(idx)-5);  % Decelerate at 2 m/s²
 
 % Create a Simulink signal builder block with these values
 ```
+
+## Troubleshooting
+
+If you encounter issues with the simulation:
+
+1. **S-Function not found**: Verify the MEX file was compiled successfully
+2. **Parameter dimension errors**: Double-check all parameter dimensions
+3. **Numerical instability**: Try increasing process/measurement noise
+4. **Slow execution**: Consider optimizing the C++ code or reducing model complexity
