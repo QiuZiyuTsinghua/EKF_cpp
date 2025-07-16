@@ -1,0 +1,291 @@
+%% File: ekf_sfun.tlc
+%% Abstract:
+%%   Target Language Compiler file for Extended Kalman Filter S-Function
+%%   This enables inlining the EKF implementation when generating C code from Simulink
+
+%implements ekf_sfun "C"
+
+%% Function: BlockInstanceSetup ===========================================
+%% Abstract:
+%%   Called for each instance of the block
+%function BlockInstanceSetup(block, system) void
+  %openfile buffer
+  static EKF *ekf_obj_%<LibGetActiveInstance()> = NULL;
+  
+  // Vehicle parameters for the model
+  static const double m = 1500.0;      // Vehicle mass (kg)
+  static const double Iz = 2500.0;     // Yaw moment of inertia (kg*m^2)
+  static const double lf = 1.2;        // Distance from CG to front axle (m)
+  static const double lr = 1.4;        // Distance from CG to rear axle (m)
+  static const double track = 1.6;     // Track width (m)
+  static const double Cf = 50000.0;    // Front cornering stiffness (N/rad)
+  static const double Cr = 50000.0;    // Rear cornering stiffness (N/rad)
+  
+  // Function declarations for EKF model
+  Eigen::VectorXd stateTransitionFcn_%<LibGetActiveInstance()>(const Eigen::VectorXd& x, double dt);
+  Eigen::MatrixXd stateJacobianFcn_%<LibGetActiveInstance()>(const Eigen::VectorXd& x, double dt);
+  Eigen::VectorXd measurementFcn_%<LibGetActiveInstance()>(const Eigen::VectorXd& x);
+  Eigen::MatrixXd measurementJacobianFcn_%<LibGetActiveInstance()>(const Eigen::VectorXd& x);
+  
+  // State transition function implementation
+  Eigen::VectorXd stateTransitionFcn_%<LibGetActiveInstance()>(const Eigen::VectorXd& x, double dt) {
+      // Extract state variables
+      double vx = x(0);    // Longitudinal velocity
+      double vy = x(1);    // Lateral velocity
+      double gamma = x(2); // Yaw rate
+      
+      Eigen::VectorXd next_x = x;
+      
+      // Calculate tire slip angles
+      double beta = atan2(vy, vx);  // Vehicle sideslip angle
+      
+      // Front and rear tire slip angles
+      double alpha_f = beta - lf * gamma / vx;  // Front slip angle
+      double alpha_r = beta + lr * gamma / vx;  // Rear slip angle
+      
+      // Calculate tire forces
+      double Fyf = -Cf * alpha_f;  // Front lateral force
+      double Fyr = -Cr * alpha_r;  // Rear lateral force
+      
+      // Calculate acceleration components
+      double ax = 0.0;  // Assume zero longitudinal acceleration for simplicity
+      double ay = (Fyf + Fyr) / m;  // Lateral acceleration
+      double Mz = Fyf * lf - Fyr * lr;  // Yaw moment
+      
+      // Update state using the vehicle dynamics equations
+      next_x(0) += dt * (ax + vy * gamma);
+      next_x(1) += dt * (ay - vx * gamma);
+      next_x(2) += dt * (Mz / Iz);
+      
+      return next_x;
+  }
+  
+  // State Jacobian function implementation
+  Eigen::MatrixXd stateJacobianFcn_%<LibGetActiveInstance()>(const Eigen::VectorXd& x, double dt) {
+      Eigen::MatrixXd J = Eigen::MatrixXd::Identity(x.size(), x.size());
+      
+      // Extract state variables
+      double vx = x(0);
+      double vy = x(1);
+      double gamma = x(2);
+      
+      // Jacobian elements based on linearized model
+      J(0, 1) = dt * gamma;
+      J(0, 2) = dt * vy;
+      J(1, 0) = -dt * gamma;
+      J(1, 2) = -dt * vx;
+      
+      return J;
+  }
+  
+  // Measurement function implementation
+  Eigen::VectorXd measurementFcn_%<LibGetActiveInstance()>(const Eigen::VectorXd& x) {
+      // Extract state variables
+      double vx = x(0);
+      double vy = x(1);
+      double gamma = x(2);
+      
+      // Create measurement vector (size should match measDim)
+      Eigen::VectorXd z(7);  // [ax, ay, gamma, v_fl, v_fr, v_rl, v_rr]
+      
+      // Calculate tire slip angles
+      double beta = atan2(vy, vx);
+      double alpha_f = beta - lf * gamma / vx;
+      double alpha_r = beta + lr * gamma / vx;
+      
+      // Calculate tire forces
+      double Fyf = -Cf * alpha_f;
+      double Fyr = -Cr * alpha_r;
+      
+      // Calculate measured accelerations
+      double ax = vy * gamma;  // Centripetal component only (simplified)
+      double ay = (Fyf + Fyr) / m - vx * gamma;
+      
+      // Calculate wheel speeds
+      double v_fl = vx - (gamma * track/2);  // Front-left wheel
+      double v_fr = vx + (gamma * track/2);  // Front-right wheel
+      double v_rl = vx - (gamma * track/2);  // Rear-left wheel
+      double v_rr = vx + (gamma * track/2);  // Rear-right wheel
+      
+      // Populate measurement vector
+      z << ax, ay, gamma, v_fl, v_fr, v_rl, v_rr;
+      
+      return z;
+  }
+  
+  // Measurement Jacobian function implementation
+  Eigen::MatrixXd measurementJacobianFcn_%<LibGetActiveInstance()>(const Eigen::VectorXd& x) {
+      // Create Jacobian matrix H mapping from state to measurement
+      Eigen::MatrixXd H = Eigen::MatrixXd::Zero(7, 3);  // 7 measurements, 3 states
+      
+      // Extract state variables
+      double vx = x(0);
+      double vy = x(1);
+      double gamma = x(2);
+      
+      // Acceleration measurement derivatives
+      H(0, 1) = gamma;
+      H(0, 2) = vy;
+      H(1, 0) = -gamma;
+      H(1, 2) = -vx;
+      
+      // Yaw rate measurement (direct observation)
+      H(2, 2) = 1.0;
+      
+      // Wheel speed measurements
+      H(3, 0) = 1.0;       // Front-left wheel
+      H(3, 2) = -track/2;
+      H(4, 0) = 1.0;       // Front-right wheel
+      H(4, 2) = track/2;
+      H(5, 0) = 1.0;       // Rear-left wheel
+      H(5, 2) = -track/2;
+      H(6, 0) = 1.0;       // Rear-right wheel
+      H(6, 2) = track/2;
+      
+      return H;
+  }
+  %closefile buffer
+  
+  %<LibCacheDefine(buffer)>
+%endfunction
+
+%% Function: Start ========================================================
+%% Abstract:
+%%   Called once per instance at the start of code generation
+%function Start(block, system) Output
+  /* Initialize EKF */
+  {
+    int stateDim = 3;  /* State dimension: [vx, vy, gamma] */
+    int measDim = 7;   /* Measurement dimension: [ax, ay, gamma, v_fl, v_fr, v_rl, v_rr] */
+    int ctrlDim = 0;   /* Control dimension */
+    double dt = 0.01;  /* Sample time */
+    
+    /* Create EKF instance */
+    ekf_obj_%<LibGetActiveInstance()> = new EKF(stateDim, measDim, ctrlDim);
+    
+    /* Set initial state */
+    Eigen::VectorXd x0(stateDim);
+    Eigen::MatrixXd P0(stateDim, stateDim);
+    
+    /* Set initial values - typical defaults */
+    x0(0) = 0.1;  /* Initial vx */
+    x0(1) = 0.0;  /* Initial vy */
+    x0(2) = 0.0;  /* Initial gamma */
+    
+    P0 = Eigen::MatrixXd::Identity(stateDim, stateDim) * 0.1;
+    
+    /* Process and measurement noise covariances */
+    Eigen::MatrixXd Q = Eigen::MatrixXd::Identity(stateDim, stateDim) * 0.01;
+    Eigen::MatrixXd R = Eigen::MatrixXd::Identity(measDim, measDim) * 0.1;
+    
+    /* Initialize EKF */
+    ekf_obj_%<LibGetActiveInstance()>->setInitialState(x0, P0);
+    ekf_obj_%<LibGetActiveInstance()>->setProcessNoise(Q);
+    ekf_obj_%<LibGetActiveInstance()>->setMeasurementNoise(R);
+    
+    /* Set model functions */
+    ekf_obj_%<LibGetActiveInstance()>->setStateTransitionFunction(
+      std::bind(stateTransitionFcn_%<LibGetActiveInstance()>, std::placeholders::_1, std::placeholders::_2));
+    
+    ekf_obj_%<LibGetActiveInstance()>->setStateJacobianFunction(
+      std::bind(stateJacobianFcn_%<LibGetActiveInstance()>, std::placeholders::_1, std::placeholders::_2));
+    
+    ekf_obj_%<LibGetActiveInstance()>->setMeasurementFunction(
+      std::bind(measurementFcn_%<LibGetActiveInstance()>, std::placeholders::_1));
+    
+    ekf_obj_%<LibGetActiveInstance()>->setMeasurementJacobianFunction(
+      std::bind(measurementJacobianFcn_%<LibGetActiveInstance()>, std::placeholders::_1));
+  }
+%endfunction
+
+%% Function: Outputs ======================================================
+%% Abstract:
+%%   Called to generate the output code for the S-function
+%function Outputs(block, system) Output
+  /* EKF processing */
+  {
+    /* Constants */
+    double dt = 0.01;  /* Sample time */
+    int stateDim = 3;
+    int measDim = 7;
+    
+    /* Create measurement vector */
+    Eigen::VectorXd z(measDim);
+    
+    /* Get measurements from input port */
+    %foreach i = 7
+      z(%<i>) = %<LibBlockInputSignal(0, i, "")>;
+    %endforeach
+    
+    /* Perform EKF prediction and update */
+    ekf_obj_%<LibGetActiveInstance()>->predict(dt);
+    ekf_obj_%<LibGetActiveInstance()>->update(z);
+    
+    /* Get state and covariance */
+    Eigen::VectorXd state = ekf_obj_%<LibGetActiveInstance()>->getState();
+    Eigen::MatrixXd cov = ekf_obj_%<LibGetActiveInstance()>->getCovariance();
+    
+    /* Output state */
+    %foreach i = 3
+      %<LibBlockOutputSignal(0, i, "")> = state(%<i>);
+    %endforeach
+    
+    /* Output covariance (flattened) */
+    %foreach i = 3
+      %foreach j = 3
+        %<LibBlockOutputSignal(1, i + j*3, "")> = cov(%<i>, %<j>);
+      %endforeach
+    %endforeach
+  }
+%endfunction
+
+%% Function: Terminate ====================================================
+%% Abstract:
+%%   Called at the end of code generation
+%function Terminate(block, system) Output  
+  /* Terminate EKF */
+  if (ekf_obj_%<LibGetActiveInstance()>) {
+    delete ekf_obj_%<LibGetActiveInstance()>;
+    ekf_obj_%<LibGetActiveInstance()> = NULL;
+  }
+%endfunction
+    
+    /* Get measurements from input port */
+    %foreach i = measDim
+      z(%<i>) = %<LibBlockInputSignal(0, i, "")>;
+    %endforeach
+    
+    /* Perform EKF prediction and update */
+    ekf_obj_%<LibGetRecordIdentifier(blockID)>->predict(dt);
+    ekf_obj_%<LibGetRecordIdentifier(blockID)>->update(z);
+    
+    /* Get state and covariance */
+    Eigen::VectorXd state = ekf_obj_%<LibGetRecordIdentifier(blockID)>->getState();
+    Eigen::MatrixXd cov = ekf_obj_%<LibGetRecordIdentifier(blockID)>->getCovariance();
+    
+    /* Output state */
+    %foreach i = stateDim
+      %<LibBlockOutputSignal(0, i, "")> = state(%<i>);
+    %endforeach
+    
+    /* Output covariance (flattened) */
+    %foreach i = stateDim
+      %foreach j = stateDim
+        %<LibBlockOutputSignal(1, i + j*stateDim, "")> = cov(%<i>, %<j>);
+      %endforeach
+    %endforeach
+  }
+%endfunction
+
+%% Function: Terminate ====================================================
+%% Abstract:
+%%   Called at the end of code generation
+%function Terminate(block, system) Output
+  %assign blockID = LibGetFormattedBlockPath(block)
+  
+  /* Terminate EKF for %<blockID> */
+  if (ekf_obj_%<LibGetRecordIdentifier(blockID)>) {
+    delete ekf_obj_%<LibGetRecordIdentifier(blockID)>;
+    ekf_obj_%<LibGetRecordIdentifier(blockID)> = NULL;
+  }
+%endfunction
