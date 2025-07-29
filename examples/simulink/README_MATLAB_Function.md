@@ -1,6 +1,20 @@
 # EKF Vehicle Velocity Estimator - MATLAB Function Implementation
 
-本文档说明如何使用MATLAB函数版本的扩展卡尔曼滤波器(EKF)车速估计器，该实现与原始S-Function版本功能完全一致。
+本文档说明如何使用MATLAB函数版本的扩展卡尔曼滤波器(EKF)车速估计器。最新版本支持**四轮横向力估计**和**多输入控制**，实现更精确的车辆动力学建模。
+
+## 功能特性
+
+### ✨ 最新版本特性 (扩展EKF)
+- **7维状态估计**：`[v_x, v_y, γ, Fy_fl, Fy_fr, Fy_rl, Fy_rr]`
+- **5维控制输入**：`[δ, Fx_fl, Fx_fr, Fx_rl, Fx_rr]`
+- **单轮动力学模型**：独立建模四个车轮的动态特性
+- **轮胎力动态估计**：实时估计各轮横向力
+- **精确转向建模**：考虑前轮转角对各轮运动的影响
+
+### 传统版本特性
+- 3维状态估计：`[v_x, v_y, γ]`
+- 简化车辆模型
+- 集中式轮胎力建模
 
 ## 文件说明
 
@@ -27,25 +41,36 @@
 
 ## 输入输出接口
 
-### 输入
+### 扩展版本 (ekf_simulink_function.m)
+
+#### 输入
 - **measurements** [7×1]: 测量向量
   - `measurements(1)`: 纵向加速度 ax (m/s²)
   - `measurements(2)`: 横向加速度 ay (m/s²)
-  - `measurements(3)`: 横摆角速度 gamma (rad/s)
+  - `measurements(3)`: 横摆角速度 γ (rad/s)
   - `measurements(4)`: 左前轮速 v_fl (m/s)
   - `measurements(5)`: 右前轮速 v_fr (m/s)
   - `measurements(6)`: 左后轮速 v_rl (m/s)
   - `measurements(7)`: 右后轮速 v_rr (m/s)
 
-- **control_input** [1×1]: 控制输入(方向盘转角，当前未使用)
+- **control_inputs** [5×1]: 控制输入向量
+  - `control_inputs(1)`: 前轮转角 δ (rad)
+  - `control_inputs(2)`: 左前轮纵向力 Fx_fl (N)
+  - `control_inputs(3)`: 右前轮纵向力 Fx_fr (N)
+  - `control_inputs(4)`: 左后轮纵向力 Fx_rl (N)
+  - `control_inputs(5)`: 右后轮纵向力 Fx_rr (N)
 
-### 输出
-- **state_estimate** [3×1]: 状态估计向量
+#### 输出
+- **state_estimate** [7×1]: 状态估计向量
   - `state_estimate(1)`: 纵向速度 v_x (m/s)
   - `state_estimate(2)`: 横向速度 v_y (m/s)
-  - `state_estimate(3)`: 横摆角速度 gamma (rad/s)
+  - `state_estimate(3)`: 横摆角速度 γ (rad/s)
+  - `state_estimate(4)`: 左前轮横向力 Fy_fl (N)
+  - `state_estimate(5)`: 右前轮横向力 Fy_fr (N)
+  - `state_estimate(6)`: 左后轮横向力 Fy_rl (N)
+  - `state_estimate(7)`: 右后轮横向力 Fy_rr (N)
 
-- **covariance_matrix** [9×1]: 展平的协方差矩阵(3×3 → 9×1)
+- **covariance_flat** [49×1]: 展平的协方差矩阵(7×7 → 49×1)
 
 ## 在Simulink中使用
 
