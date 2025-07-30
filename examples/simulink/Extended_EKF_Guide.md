@@ -52,6 +52,261 @@ z = [ax, ay, γ_meas, v_fl, v_fr, v_rl, v_rr]ᵀ
 - `γ_meas`: 横摆角速度测量 (rad/s)
 - `v_fl, v_fr, v_rl, v_rr`: 四轮速度测量 (m/s)
 
+## 数学模型详细推导
+
+### 1. 系统动力学模型
+
+#### 1.1 车辆质心动力学方程
+
+车辆质心处的力平衡方程：
+
+$$\begin{aligned}
+m \dot{v}_x &= F_{x,total} + m v_y \gamma \\
+m \dot{v}_y &= F_{y,total} - m v_x \gamma \\
+I_z \dot{\gamma} &= M_{z,total}
+\end{aligned}$$
+
+其中总力和力矩计算：
+
+$$\begin{aligned}
+F_{x,total} &= \sum_{i} F_{x,i}^{veh} \\
+F_{y,total} &= \sum_{i} F_{y,i}^{veh} \\
+M_{z,total} &= \sum_{i} (F_{x,i}^{veh} \cdot y_i - F_{y,i}^{veh} \cdot x_i)
+\end{aligned}$$
+
+#### 1.2 各轮在车辆坐标系下的力分量
+
+**前轮力变换**（考虑转向角δ）：
+$$\begin{aligned}
+F_{x,fl}^{veh} &= F_{x,fl} \cos\delta - F_{y,fl} \sin\delta \\
+F_{y,fl}^{veh} &= F_{x,fl} \sin\delta + F_{y,fl} \cos\delta \\
+F_{x,fr}^{veh} &= F_{x,fr} \cos\delta - F_{y,fr} \sin\delta \\
+F_{y,fr}^{veh} &= F_{x,fr} \sin\delta + F_{y,fr} \cos\delta
+\end{aligned}$$
+
+**后轮力**（无转向）：
+$$\begin{aligned}
+F_{x,rl}^{veh} &= F_{x,rl} \\
+F_{y,rl}^{veh} &= F_{y,rl} \\
+F_{x,rr}^{veh} &= F_{x,rr} \\
+F_{y,rr}^{veh} &= F_{y,rr}
+\end{aligned}$$
+
+#### 1.3 轮胎横向力动态模型
+
+横向力采用一阶动态响应：
+
+$$\dot{F}_{y,i} = \frac{F_{y,i}^{desired} - F_{y,i}}{\tau_{fy}}$$
+
+其中期望横向力通过线性轮胎模型计算：
+
+$$F_{y,i}^{desired} = -C_i \alpha_i$$
+
+#### 1.4 轮胎侧偏角计算
+
+**各轮在车辆坐标系下的速度**：
+$$\begin{aligned}
+v_{wheel,x}^{fl} &= v_x - \gamma \cdot \frac{track_f}{2} \\
+v_{wheel,y}^{fl} &= v_y + \gamma \cdot l_f \\
+v_{wheel,x}^{fr} &= v_x + \gamma \cdot \frac{track_f}{2} \\
+v_{wheel,y}^{fr} &= v_y + \gamma \cdot l_f \\
+v_{wheel,x}^{rl} &= v_x - \gamma \cdot \frac{track_r}{2} \\
+v_{wheel,y}^{rl} &= v_y - \gamma \cdot l_r \\
+v_{wheel,x}^{rr} &= v_x + \gamma \cdot \frac{track_r}{2} \\
+v_{wheel,y}^{rr} &= v_y - \gamma \cdot l_r
+\end{aligned}$$
+
+**前轮在轮胎坐标系下的速度**（考虑转向角）：
+$$\begin{aligned}
+v_{tire,long}^{fl} &= v_{wheel,x}^{fl} \cos\delta + v_{wheel,y}^{fl} \sin\delta \\
+v_{tire,lat}^{fl} &= -v_{wheel,x}^{fl} \sin\delta + v_{wheel,y}^{fl} \cos\delta \\
+v_{tire,long}^{fr} &= v_{wheel,x}^{fr} \cos\delta + v_{wheel,y}^{fr} \sin\delta \\
+v_{tire,lat}^{fr} &= -v_{wheel,x}^{fr} \sin\delta + v_{wheel,y}^{fr} \cos\delta
+\end{aligned}$$
+
+**后轮在轮胎坐标系下的速度**：
+$$\begin{aligned}
+v_{tire,long}^{rl} &= v_{wheel,x}^{rl} \\
+v_{tire,lat}^{rl} &= v_{wheel,y}^{rl} \\
+v_{tire,long}^{rr} &= v_{wheel,x}^{rr} \\
+v_{tire,lat}^{rr} &= v_{wheel,y}^{rr}
+\end{aligned}$$
+
+**侧偏角计算**：
+$$\alpha_i = \arctan\left(\frac{v_{tire,lat}^i}{|v_{tire,long}^i|}\right)$$
+
+#### 1.5 完整的状态方程
+
+连续时间状态方程：
+$$\dot{\mathbf{x}} = \mathbf{f}(\mathbf{x}, \mathbf{u}) + \mathbf{w}$$
+
+其中：
+$$\mathbf{f}(\mathbf{x}, \mathbf{u}) = \begin{bmatrix}
+\frac{F_{x,total} + m v_y \gamma}{m} \\
+\frac{F_{y,total} - m v_x \gamma}{m} \\
+\frac{M_{z,total}}{I_z} \\
+\frac{-C_f \alpha_{fl} - F_{y,fl}}{\tau_{fy}} \\
+\frac{-C_f \alpha_{fr} - F_{y,fr}}{\tau_{fy}} \\
+\frac{-C_r \alpha_{rl} - F_{y,rl}}{\tau_{fy}} \\
+\frac{-C_r \alpha_{rr} - F_{y,rr}}{\tau_{fy}}
+\end{bmatrix}$$
+
+### 2. 观测模型
+
+#### 2.1 加速度测量模型
+
+**纵向加速度**：
+$$a_x = \dot{v}_x - v_y \gamma = \frac{F_{x,total}}{m}$$
+
+**横向加速度**：
+$$a_y = \dot{v}_y + v_x \gamma = \frac{F_{y,total}}{m}$$
+
+#### 2.2 轮速测量模型
+
+各轮的轮速测量模型：
+$$v_{wheel}^i = \sqrt{(v_{tire,long}^i)^2 + (v_{tire,lat}^i)^2}$$
+
+#### 2.3 完整的观测方程
+
+$$\mathbf{z} = \mathbf{h}(\mathbf{x}, \mathbf{u}) + \mathbf{v}$$
+
+其中：
+$$\mathbf{h}(\mathbf{x}, \mathbf{u}) = \begin{bmatrix}
+\frac{F_{x,total}}{m} \\
+\frac{F_{y,total}}{m} \\
+\gamma \\
+\sqrt{(v_{tire,long}^{fl})^2 + (v_{tire,lat}^{fl})^2} \\
+\sqrt{(v_{tire,long}^{fr})^2 + (v_{tire,lat}^{fr})^2} \\
+\sqrt{(v_{tire,long}^{rl})^2 + (v_{tire,lat}^{rl})^2} \\
+\sqrt{(v_{tire,long}^{rr})^2 + (v_{tire,lat}^{rr})^2}
+\end{bmatrix}$$
+
+### 3. 线性化模型（EKF雅可比矩阵）
+
+#### 3.1 状态转移雅可比矩阵 $\mathbf{F}$
+
+$$\mathbf{F} = \frac{\partial \mathbf{f}}{\partial \mathbf{x}} \bigg|_{\mathbf{x}=\hat{\mathbf{x}}}$$
+
+主要非零元素：
+
+**速度方程对状态的偏导**：
+$$\frac{\partial \dot{v}_x}{\partial v_x} = 0, \quad \frac{\partial \dot{v}_x}{\partial v_y} = \gamma, \quad \frac{\partial \dot{v}_x}{\partial \gamma} = v_y$$
+
+$$\frac{\partial \dot{v}_y}{\partial v_x} = -\gamma, \quad \frac{\partial \dot{v}_y}{\partial v_y} = 0, \quad \frac{\partial \dot{v}_y}{\partial \gamma} = -v_x$$
+
+**横摆角速度方程对状态的偏导**：
+$$\frac{\partial \dot{\gamma}}{\partial v_x} = \frac{1}{I_z}\frac{\partial M_{z,total}}{\partial v_x}, \quad \frac{\partial \dot{\gamma}}{\partial v_y} = \frac{1}{I_z}\frac{\partial M_{z,total}}{\partial v_y}$$
+
+**轮胎力方程对状态的偏导**：
+$$\frac{\partial \dot{F}_{y,i}}{\partial F_{y,i}} = -\frac{1}{\tau_{fy}}, \quad \frac{\partial \dot{F}_{y,i}}{\partial v_x} = -\frac{C_i}{\tau_{fy}}\frac{\partial \alpha_i}{\partial v_x}$$
+
+#### 3.2 状态转移雅可比矩阵的显式形式
+
+状态转移雅可比矩阵 $\mathbf{F}$ 的完整形式为 7×7 矩阵：
+
+$$\mathbf{F} = \begin{bmatrix}
+0 & \gamma & v_y & \frac{\partial \dot{v}_x}{\partial F_{y,fl}} & \frac{\partial \dot{v}_x}{\partial F_{y,fr}} & \frac{\partial \dot{v}_x}{\partial F_{y,rl}} & \frac{\partial \dot{v}_x}{\partial F_{y,rr}} \\
+-\gamma & 0 & -v_x & \frac{1}{m} & \frac{1}{m} & \frac{1}{m} & \frac{1}{m} \\
+\frac{\partial \dot{\gamma}}{\partial v_x} & \frac{\partial \dot{\gamma}}{\partial v_y} & 0 & \frac{\partial \dot{\gamma}}{\partial F_{y,fl}} & \frac{\partial \dot{\gamma}}{\partial F_{y,fr}} & \frac{\partial \dot{\gamma}}{\partial F_{y,rl}} & \frac{\partial \dot{\gamma}}{\partial F_{y,rr}} \\
+-\frac{C_f}{\tau_{fy}}\frac{\partial \alpha_{fl}}{\partial v_x} & -\frac{C_f}{\tau_{fy}}\frac{\partial \alpha_{fl}}{\partial v_y} & -\frac{C_f}{\tau_{fy}}\frac{\partial \alpha_{fl}}{\partial \gamma} & -\frac{1}{\tau_{fy}} & 0 & 0 & 0 \\
+-\frac{C_f}{\tau_{fy}}\frac{\partial \alpha_{fr}}{\partial v_x} & -\frac{C_f}{\tau_{fy}}\frac{\partial \alpha_{fr}}{\partial v_y} & -\frac{C_f}{\tau_{fy}}\frac{\partial \alpha_{fr}}{\partial \gamma} & 0 & -\frac{1}{\tau_{fy}} & 0 & 0 \\
+-\frac{C_r}{\tau_{fy}}\frac{\partial \alpha_{rl}}{\partial v_x} & -\frac{C_r}{\tau_{fy}}\frac{\partial \alpha_{rl}}{\partial v_y} & -\frac{C_r}{\tau_{fy}}\frac{\partial \alpha_{rl}}{\partial \gamma} & 0 & 0 & -\frac{1}{\tau_{fy}} & 0 \\
+-\frac{C_r}{\tau_{fy}}\frac{\partial \alpha_{rr}}{\partial v_x} & -\frac{C_r}{\tau_{fy}}\frac{\partial \alpha_{rr}}{\partial v_y} & -\frac{C_r}{\tau_{fy}}\frac{\partial \alpha_{rr}}{\partial \gamma} & 0 & 0 & 0 & -\frac{1}{\tau_{fy}}
+\end{bmatrix}$$
+
+其中关键的偏导数项：
+
+**横摆角速度对状态的偏导**：
+$$\frac{\partial \dot{\gamma}}{\partial v_x} = \frac{1}{I_z}\left[\sin\delta(F_{y,fl} + F_{y,fr}) \frac{\partial \alpha_{fl}}{\partial v_x} C_f + \sin\delta(F_{y,fl} + F_{y,fr}) \frac{\partial \alpha_{fr}}{\partial v_x} C_f\right]$$
+
+$$\frac{\partial \dot{\gamma}}{\partial v_y} = \frac{1}{I_z}\left[\cos\delta(F_{y,fl} + F_{y,fr}) \frac{\partial \alpha_{fl}}{\partial v_y} C_f + \cos\delta(F_{y,fl} + F_{y,fr}) \frac{\partial \alpha_{fr}}{\partial v_y} C_f\right]$$
+
+$$\frac{\partial \dot{\gamma}}{\partial F_{y,i}} = \frac{1}{I_z} \begin{cases}
+l_f \cos\delta \pm \frac{track_f}{2} \sin\delta & \text{前轮} \\
+-l_r \pm \frac{track_r}{2} & \text{后轮}
+\end{cases}$$
+
+**侧偏角对状态的偏导**：
+
+对于前轮（左前轮为例）：
+$$\frac{\partial \alpha_{fl}}{\partial v_x} = \frac{-\sin\delta \cdot v_{tire,long}^{fl} + \cos\delta \cdot v_{tire,lat}^{fl}}{(v_{tire,long}^{fl})^2 + (v_{tire,lat}^{fl})^2}$$
+
+$$\frac{\partial \alpha_{fl}}{\partial v_y} = \frac{\cos\delta \cdot v_{tire,long}^{fl} + \sin\delta \cdot v_{tire,lat}^{fl}}{(v_{tire,long}^{fl})^2 + (v_{tire,lat}^{fl})^2}$$
+
+$$\frac{\partial \alpha_{fl}}{\partial \gamma} = \frac{(-l_f \sin\delta - \frac{track_f}{2} \cos\delta) \cdot v_{tire,long}^{fl} + (l_f \cos\delta - \frac{track_f}{2} \sin\delta) \cdot v_{tire,lat}^{fl}}{(v_{tire,long}^{fl})^2 + (v_{tire,lat}^{fl})^2}$$
+
+对于后轮（左后轮为例）：
+$$\frac{\partial \alpha_{rl}}{\partial v_x} = \frac{v_{tire,lat}^{rl}}{(v_{tire,long}^{rl})^2 + (v_{tire,lat}^{rl})^2}$$
+
+$$\frac{\partial \alpha_{rl}}{\partial v_y} = \frac{-v_{tire,long}^{rl}}{(v_{tire,long}^{rl})^2 + (v_{tire,lat}^{rl})^2}$$
+
+$$\frac{\partial \alpha_{rl}}{\partial \gamma} = \frac{l_r \cdot v_{tire,lat}^{rl} + \frac{track_r}{2} \cdot v_{tire,long}^{rl}}{(v_{tire,long}^{rl})^2 + (v_{tire,lat}^{rl})^2}$$
+
+#### 3.3 观测雅可比矩阵的显式形式
+
+观测雅可比矩阵 $\mathbf{H}$ 的完整形式为 7×7 矩阵：
+
+$$\mathbf{H} = \begin{bmatrix}
+\frac{\partial a_x}{\partial v_x} & \frac{\partial a_x}{\partial v_y} & \frac{\partial a_x}{\partial \gamma} & \frac{\partial a_x}{\partial F_{y,fl}} & \frac{\partial a_x}{\partial F_{y,fr}} & \frac{\partial a_x}{\partial F_{y,rl}} & \frac{\partial a_x}{\partial F_{y,rr}} \\
+\frac{\partial a_y}{\partial v_x} & \frac{\partial a_y}{\partial v_y} & \frac{\partial a_y}{\partial \gamma} & \frac{1}{m} & \frac{1}{m} & \frac{1}{m} & \frac{1}{m} \\
+0 & 0 & 1 & 0 & 0 & 0 & 0 \\
+\frac{\partial v_{fl}}{\partial v_x} & \frac{\partial v_{fl}}{\partial v_y} & \frac{\partial v_{fl}}{\partial \gamma} & 0 & 0 & 0 & 0 \\
+\frac{\partial v_{fr}}{\partial v_x} & \frac{\partial v_{fr}}{\partial v_y} & \frac{\partial v_{fr}}{\partial \gamma} & 0 & 0 & 0 & 0 \\
+\frac{\partial v_{rl}}{\partial v_x} & \frac{\partial v_{rl}}{\partial v_y} & \frac{\partial v_{rl}}{\partial \gamma} & 0 & 0 & 0 & 0 \\
+\frac{\partial v_{rr}}{\partial v_x} & \frac{\partial v_{rr}}{\partial v_y} & \frac{\partial v_{rr}}{\partial \gamma} & 0 & 0 & 0 & 0
+\end{bmatrix}$$
+
+其中关键的偏导数项：
+
+**纵向加速度测量对状态的偏导**：
+$$\frac{\partial a_x}{\partial v_x} = \frac{1}{m}\left[-\sin\delta(F_{y,fl} + F_{y,fr}) \frac{\partial \alpha_{fl}}{\partial v_x} C_f - \sin\delta(F_{y,fl} + F_{y,fr}) \frac{\partial \alpha_{fr}}{\partial v_x} C_f\right]$$
+
+$$\frac{\partial a_x}{\partial v_y} = \frac{1}{m}\left[-\sin\delta(F_{y,fl} + F_{y,fr}) \frac{\partial \alpha_{fl}}{\partial v_y} C_f - \sin\delta(F_{y,fl} + F_{y,fr}) \frac{\partial \alpha_{fr}}{\partial v_y} C_f\right]$$
+
+$$\frac{\partial a_x}{\partial F_{y,i}} = \frac{1}{m} \begin{cases}
+-\sin\delta & \text{前轮} \\
+0 & \text{后轮}
+\end{cases}$$
+
+**轮速测量对状态的偏导**：
+
+对于前轮（左前轮为例）：
+$$\frac{\partial v_{fl}}{\partial v_x} = \frac{(1 - \frac{\gamma \cdot track_f}{2}) \cos\delta - \gamma l_f \sin\delta}{\sqrt{(v_{tire,long}^{fl})^2 + (v_{tire,lat}^{fl})^2}}$$
+
+$$\frac{\partial v_{fl}}{\partial v_y} = \frac{(1 - \frac{\gamma \cdot track_f}{2}) \sin\delta + \gamma l_f \cos\delta}{\sqrt{(v_{tire,long}^{fl})^2 + (v_{tire,lat}^{fl})^2}}$$
+
+$$\frac{\partial v_{fl}}{\partial \gamma} = \frac{(-\frac{track_f}{2}(v_x \cos\delta + v_y \sin\delta) + l_f(-v_x \sin\delta + v_y \cos\delta))}{\sqrt{(v_{tire,long}^{fl})^2 + (v_{tire,lat}^{fl})^2}}$$
+
+对于后轮（左后轮为例）：
+$$\frac{\partial v_{rl}}{\partial v_x} = \frac{v_x - \gamma \cdot \frac{track_r}{2}}{\sqrt{(v_x - \gamma \cdot \frac{track_r}{2})^2 + (v_y - \gamma l_r)^2}}$$
+
+$$\frac{\partial v_{rl}}{\partial v_y} = \frac{v_y - \gamma l_r}{\sqrt{(v_x - \gamma \cdot \frac{track_r}{2})^2 + (v_y - \gamma l_r)^2}}$$
+
+$$\frac{\partial v_{rl}}{\partial \gamma} = \frac{-\frac{track_r}{2}(v_x - \gamma \cdot \frac{track_r}{2}) - l_r(v_y - \gamma l_r)}{\sqrt{(v_x - \gamma \cdot \frac{track_r}{2})^2 + (v_y - \gamma l_r)^2}}$$
+
+#### 3.4 观测雅可比矩阵 $\mathbf{H}$
+
+$$\mathbf{H} = \frac{\partial \mathbf{h}}{\partial \mathbf{x}} \bigg|_{\mathbf{x}=\hat{\mathbf{x}}}$$
+
+**加速度测量对状态的偏导**：
+$$\frac{\partial a_x}{\partial F_{y,i}} = \frac{1}{m}\frac{\partial F_{x,total}}{\partial F_{y,i}}, \quad \frac{\partial a_y}{\partial F_{y,i}} = \frac{1}{m}$$
+
+**轮速测量对状态的偏导**：
+
+对于前轮（左前轮为例）：
+$$\frac{\partial v_{fl}}{\partial v_x} = \frac{(1 - \frac{\gamma \cdot track_f}{2}) \cos\delta - \gamma l_f \sin\delta}{\sqrt{(v_{tire,long}^{fl})^2 + (v_{tire,lat}^{fl})^2}}$$
+
+$$\frac{\partial v_{fl}}{\partial v_y} = \frac{(1 - \frac{\gamma \cdot track_f}{2}) \sin\delta + \gamma l_f \cos\delta}{\sqrt{(v_{tire,long}^{fl})^2 + (v_{tire,lat}^{fl})^2}}$$
+
+$$\frac{\partial v_{fl}}{\partial \gamma} = \frac{(-\frac{track_f}{2}(v_x \cos\delta + v_y \sin\delta) + l_f(-v_x \sin\delta + v_y \cos\delta))}{\sqrt{(v_{tire,long}^{fl})^2 + (v_{tire,lat}^{fl})^2}}$$
+
+对于后轮（左后轮为例）：
+$$\frac{\partial v_{rl}}{\partial v_x} = \frac{v_x - \gamma \cdot \frac{track_r}{2}}{\sqrt{(v_x - \gamma \cdot \frac{track_r}{2})^2 + (v_y - \gamma l_r)^2}}$$
+
+$$\frac{\partial v_{rl}}{\partial v_y} = \frac{v_y - \gamma l_r}{\sqrt{(v_x - \gamma \cdot \frac{track_r}{2})^2 + (v_y - \gamma l_r)^2}}$$
+
+$$\frac{\partial v_{rl}}{\partial \gamma} = \frac{-\frac{track_r}{2}(v_x - \gamma \cdot \frac{track_r}{2}) - l_r(v_y - \gamma l_r)}{\sqrt{(v_x - \gamma \cdot \frac{track_r}{2})^2 + (v_y - \gamma l_r)^2}}$$
+
 ## 车辆动力学模型
 
 ### 单轮运动学

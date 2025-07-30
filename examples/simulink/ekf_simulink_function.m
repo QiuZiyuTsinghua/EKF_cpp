@@ -32,16 +32,16 @@ Cf = 50000.0;    % Front cornering stiffness (N/rad)
 Cr = 50000.0;    % Rear cornering stiffness (N/rad)
 
 % Tire force dynamics time constants
-tau_fy = 0.2;   % 增大横向力时间常数，减缓轮胎力变化 (s)
+tau_fy = 0.05;   % Lateral force time constant (s)
 
-% Filter parameters - 大幅降低横向速度的过程噪声
-Q = diag([0.05, 0.01, 0.005, 500, 500, 500, 500]);  % 显著降低vy和轮胎力的过程噪声
-R = diag([0.3, 0.2, 0.005, 0.1, 0.1, 0.1, 0.1]);   % 提高传感器测量可信度
+% Filter parameters - 扩展到7个状态 [vx, vy, gamma, Fy_fl, Fy_fr, Fy_rl, Fy_rr]
+Q = diag([0.1, 0.05, 0.01, 1000, 1000, 1000, 1000]);  % Process noise covariance
+R = diag([0.5, 0.3, 0.01, 0.2, 0.2, 0.2, 0.2]);       % Measurement noise covariance
 
 % Initialize on first call
 if isempty(is_initialized)
-    x_hat = [10.0; 0.0; 0.0; 0.0; 0.0; 0.0; 0.0];  % 轮胎力初值设为0
-    P_hat = diag([0.5, 0.1, 0.05, 1000, 1000, 1000, 1000]);  % 降低初始不确定性
+    x_hat = [10.0; 0.0; 0.0; 0.0; 0.0; 0.0; 0.0];  % Initial state [v_x, v_y, gamma, Fy_fl, Fy_fr, Fy_rl, Fy_rr]
+    P_hat = diag([1.0, 1.0, 0.1, 5000, 5000, 5000, 5000]);  % Initial covariance
     is_initialized = true;
 end
 
@@ -131,12 +131,12 @@ Fy_des_fr = -Cf * alpha_fr;
 Fy_des_rl = -Cr * alpha_rl;
 Fy_des_rr = -Cr * alpha_rr;
 
-% Limit desired forces - 大幅减小轮胎力限制
-max_tire_force_per_wheel = 3000;  % 单轮最大横向力3kN (约0.2g每轮)
-Fy_des_fl = max(-max_tire_force_per_wheel, min(max_tire_force_per_wheel, Fy_des_fl));
-Fy_des_fr = max(-max_tire_force_per_wheel, min(max_tire_force_per_wheel, Fy_des_fr));
-Fy_des_rl = max(-max_tire_force_per_wheel, min(max_tire_force_per_wheel, Fy_des_rl));
-Fy_des_rr = max(-max_tire_force_per_wheel, min(max_tire_force_per_wheel, Fy_des_rr));
+% Limit desired forces
+max_tire_force = m * 8.0;  % Maximum 8g lateral acceleration per tire
+Fy_des_fl = max(-max_tire_force/4, min(max_tire_force/4, Fy_des_fl));
+Fy_des_fr = max(-max_tire_force/4, min(max_tire_force/4, Fy_des_fr));
+Fy_des_rl = max(-max_tire_force/4, min(max_tire_force/4, Fy_des_rl));
+Fy_des_rr = max(-max_tire_force/4, min(max_tire_force/4, Fy_des_rr));
 
 % Transform tire forces back to vehicle coordinate system
 % Front tire forces (considering steering angle)
@@ -159,67 +159,57 @@ Mz_total = (Fx_veh_fl * y_fl - Fy_veh_fl * x_fl) + ...
            (Fx_veh_rl * y_rl - Fy_veh_rl * x_rl) + ...
            (Fx_veh_rr * y_rr - Fy_veh_rr * x_rr);
 
-% State derivatives - 修正加速度计算
-ax = Fx_total / m + vy * gamma;        % 纵向加速度（包含向心力）
-ay = Fy_total / m - vx * gamma;        % 横向加速度（包含离心力）
-gamma_dot = Mz_total / Iz;             % 横摆角加速度
+% State derivatives
+ax = Fx_total / m + vy * gamma;        % Longitudinal acceleration
+ay = Fy_total / m - vx * gamma;        % Lateral acceleration  
+gamma_dot = Mz_total / Iz;             % Yaw acceleration
 
-% Tire force dynamics (first-order lag) - 增加阻尼
+% Tire force dynamics (first-order lag)
 Fy_fl_dot = (Fy_des_fl - Fy_fl) / tau_fy;
 Fy_fr_dot = (Fy_des_fr - Fy_fr) / tau_fy;
 Fy_rl_dot = (Fy_des_rl - Fy_rl) / tau_fy;
 Fy_rr_dot = (Fy_des_rr - Fy_rr) / tau_fy;
 
-% 限制轮胎力变化率，防止过快变化
-max_fy_rate = 10000;  % 最大轮胎力变化率 N/s
-Fy_fl_dot = max(-max_fy_rate, min(max_fy_rate, Fy_fl_dot));
-Fy_fr_dot = max(-max_fy_rate, min(max_fy_rate, Fy_fr_dot));
-Fy_rl_dot = max(-max_fy_rate, min(max_fy_rate, Fy_rl_dot));
-Fy_rr_dot = max(-max_fy_rate, min(max_fy_rate, Fy_rr_dot));
-
 % State vector derivatives
 vx_dot = ax;
 vy_dot = ay;
 
-% 大幅限制速度变化率，特别是横向速度
-vx_dot = max(-5.0, min(5.0, vx_dot));   % 限制纵向加速度
-vy_dot = max(-2.0, min(2.0, vy_dot));   % 严格限制横向加速度在±2m/s²
-gamma_dot = max(-2.0, min(2.0, gamma_dot));
+% Limit accelerations for numerical stability
+vx_dot = max(-10.0, min(10.0, vx_dot));
+vy_dot = max(-10.0, min(10.0, vy_dot));
+gamma_dot = max(-5.0, min(5.0, gamma_dot));
 
 % Predict state
 x_pred = x_hat + dt * [vx_dot; vy_dot; gamma_dot; Fy_fl_dot; Fy_fr_dot; Fy_rl_dot; Fy_rr_dot];
 
-% State Jacobian F (7x7 matrix) - 减小轮胎力耦合强度
+% State Jacobian F (7x7 matrix)
 F = eye(7);
 
-% Vehicle dynamics Jacobian - 保持原有的车辆动力学耦合
+% Vehicle dynamics Jacobian
 F(1, 2) = dt * gamma;           % ∂(vx)/∂(vy)
 F(1, 3) = dt * vy;              % ∂(vx)/∂(gamma)
 F(2, 1) = -dt * gamma;          % ∂(vy)/∂(vx)  
 F(2, 3) = -dt * vx;             % ∂(vy)/∂(gamma)
 
-% Force contributions to accelerations - 减小轮胎力的影响系数
-force_coupling_factor = 0.5;  % 减少轮胎力耦合强度
-F(1, 4) = dt * sin_delta / m * force_coupling_factor;   % ∂(vx)/∂(Fy_fl)
-F(1, 5) = dt * sin_delta / m * force_coupling_factor;   % ∂(vx)/∂(Fy_fr)
-F(2, 4) = dt * cos_delta / m * force_coupling_factor;   % ∂(vy)/∂(Fy_fl)
-F(2, 5) = dt * cos_delta / m * force_coupling_factor;   % ∂(vy)/∂(Fy_fr)
-F(2, 6) = dt / m * force_coupling_factor;               % ∂(vy)/∂(Fy_rl)
-F(2, 7) = dt / m * force_coupling_factor;               % ∂(vy)/∂(Fy_rr)
+% Force contributions to accelerations
+F(1, 4) = dt * sin_delta / m;   % ∂(vx)/∂(Fy_fl)
+F(1, 5) = dt * sin_delta / m;   % ∂(vx)/∂(Fy_fr)
+F(2, 4) = dt * cos_delta / m;   % ∂(vy)/∂(Fy_fl)
+F(2, 5) = dt * cos_delta / m;   % ∂(vy)/∂(Fy_fr)
+F(2, 6) = dt / m;               % ∂(vy)/∂(Fy_rl)
+F(2, 7) = dt / m;               % ∂(vy)/∂(Fy_rr)
 
-% Yaw moment contributions - 减小横摆力矩的影响
-moment_coupling_factor = 0.3;  % 进一步减少横摆力矩耦合
-F(3, 4) = dt * (-x_fl * cos_delta - y_fl * sin_delta) / Iz * moment_coupling_factor;
-F(3, 5) = dt * (-x_fr * cos_delta - y_fr * sin_delta) / Iz * moment_coupling_factor;
-F(3, 6) = dt * (-x_rl) / Iz * moment_coupling_factor;
-F(3, 7) = dt * (-x_rr) / Iz * moment_coupling_factor;
+% Yaw moment contributions
+F(3, 4) = dt * (-x_fl * cos_delta - y_fl * sin_delta) / Iz;  % ∂(gamma)/∂(Fy_fl)
+F(3, 5) = dt * (-x_fr * cos_delta - y_fr * sin_delta) / Iz;  % ∂(gamma)/∂(Fy_fr)
+F(3, 6) = dt * (-x_rl) / Iz;                                 % ∂(gamma)/∂(Fy_rl)
+F(3, 7) = dt * (-x_rr) / Iz;                                 % ∂(gamma)/∂(Fy_rr)
 
-% Tire force dynamics (diagonal terms) - 增大阻尼
-tire_damping = 1 - dt / tau_fy;
-F(4, 4) = tire_damping;      % ∂(Fy_fl)/∂(Fy_fl)
-F(5, 5) = tire_damping;      % ∂(Fy_fr)/∂(Fy_fr)
-F(6, 6) = tire_damping;      % ∂(Fy_rl)/∂(Fy_rl)
-F(7, 7) = tire_damping;      % ∂(Fy_rr)/∂(Fy_rr)
+% Tire force dynamics (diagonal terms)
+F(4, 4) = 1 - dt / tau_fy;      % ∂(Fy_fl)/∂(Fy_fl)
+F(5, 5) = 1 - dt / tau_fy;      % ∂(Fy_fr)/∂(Fy_fr)
+F(6, 6) = 1 - dt / tau_fy;      % ∂(Fy_rl)/∂(Fy_rl)
+F(7, 7) = 1 - dt / tau_fy;      % ∂(Fy_rr)/∂(Fy_rr)
 
 % Predict covariance
 P_pred = F * P_hat * F' + Q;
@@ -315,14 +305,14 @@ K = P_pred * H' / S;
 % Update state and covariance
 x_hat = x_pred + K * y;
 
-% State constraints - 严格限制横向速度范围
-x_hat(1) = max(0.5, min(50.0, x_hat(1)));     % vx: 0.5-50 m/s（避免过低速度）
-x_hat(2) = max(-2.0, min(2.0, x_hat(2)));     % vy: ±2 m/s（严格限制横向速度）
-x_hat(3) = max(-1.5, min(1.5, x_hat(3)));     % gamma: ±1.5 rad/s
-x_hat(4) = max(-5000, min(5000, x_hat(4)));   % Fy_fl: ±5kN
-x_hat(5) = max(-5000, min(5000, x_hat(5)));   % Fy_fr: ±5kN  
-x_hat(6) = max(-5000, min(5000, x_hat(6)));   % Fy_rl: ±5kN
-x_hat(7) = max(-5000, min(5000, x_hat(7)));   % Fy_rr: ±5kN
+% State constraints
+x_hat(1) = max(0.1, min(50.0, x_hat(1)));    % vx: 0.1-50 m/s
+x_hat(2) = max(-15.0, min(15.0, x_hat(2)));  % vy: ±15 m/s
+x_hat(3) = max(-3.0, min(3.0, x_hat(3)));    % gamma: ±3 rad/s
+x_hat(4) = max(-15000, min(15000, x_hat(4))); % Fy_fl: ±15kN
+x_hat(5) = max(-15000, min(15000, x_hat(5))); % Fy_fr: ±15kN  
+x_hat(6) = max(-15000, min(15000, x_hat(6))); % Fy_rl: ±15kN
+x_hat(7) = max(-15000, min(15000, x_hat(7))); % Fy_rr: ±15kN
 
 % Joseph form covariance update for numerical stability
 I_KH = eye(7) - K * H;

@@ -44,8 +44,16 @@ target_link_libraries(ekf_demo ekf)
 add_executable(ekf_spdest main_spdest.cpp)
 target_link_libraries(ekf_spdest ekf)
 
+# Add the extended EKF test executable
+add_executable(ekf_extended_test main_extended_ekf_test.cpp)
+target_link_libraries(ekf_extended_test ekf)
+
+# Add the extended EKF test with CSV output
+add_executable(ekf_with_output main_ekf_with_output.cpp)
+target_link_libraries(ekf_with_output ekf)
+
 # Install targets
-install(TARGETS ekf ekf_demo ekf_spdest
+install(TARGETS ekf ekf_demo ekf_spdest ekf_extended_test
         RUNTIME DESTINATION bin
         LIBRARY DESTINATION lib
         ARCHIVE DESTINATION lib)
